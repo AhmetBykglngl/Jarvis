@@ -34,4 +34,18 @@ if [ -f ios/Podfile ]; then
 fi
 
 flutter pub get
+
+# Eski compileSdk kullanan eklentileri (ör. porcupine_flutter) 35'e yükselt
+python3 - <<'PY2'
+import os, re, glob
+cache = os.environ.get("PUB_CACHE") or os.path.expanduser("~/.pub-cache")
+for f in glob.glob(os.path.join(cache, "hosted", "*", "*", "android", "build.gradle*")):
+    s = open(f).read()
+    def yukselt(m):
+        return m.group(1) + ("35" if int(m.group(2)) < 34 else m.group(2))
+    y = re.sub(r"(compileSdk(?:Version)?\s*=?\s*)(\d+)", yukselt, s)
+    if y != s:
+        open(f, "w").write(y)
+        print("compileSdk yükseltildi:", f)
+PY2
 echo "Hazır."
