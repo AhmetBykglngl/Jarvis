@@ -1,0 +1,27 @@
+name: jarvis
+description: "Jarvis - sesli kişisel asistan"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  porcupine_flutter: ^3.0.0
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.0.2
+  http: ^1.2.0
+  shared_preferences: ^2.2.0
+  url_launcher: ^6.2.0
+  android_intent_plus: ^5.0.0
+  flutter_contacts: ^1.1.9
+  permission_handler: ^11.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

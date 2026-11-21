@@ -1,0 +1,29 @@
+name: Jarvis derle
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Projeyi hazırla
+        run: bash scripts/hazirla.sh
+      - name: APK derle
+        run: flutter build apk --release && cp build/app/outputs/flutter-apk/app-release.apk Jarvis.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: surum-${{ github.run_number }}
+          name: Jarvis ${{ github.run_number }}
+          files: Jarvis.apk
+          body: Telefonundan Jarvis.apk dosyasına dokunup indir ve kur.
