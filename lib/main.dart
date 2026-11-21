@@ -81,7 +81,7 @@ class Ayarlar {
     await p.setBool('webArama', webArama);
   }
 
-  bool get hazir => claudeAnahtar.isNotEmpty && picovoiceAnahtar.isNotEmpty;
+  bool get hazir => claudeAnahtar.isNotEmpty;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +220,8 @@ DAVRANIŞ:
 // ---------------------------------------------------------------------------
 
 class Eylemler {
+  static String kucukHarf(String s) => _kucuk(s);
+
   static String _kucuk(String s) => s
       .replaceAll('I', 'ı')
       .replaceAll('İ', 'i')
@@ -425,8 +427,18 @@ class _JarvisEkraniState extends State<JarvisEkrani>
     _sttHazir = await _stt.initialize(
       onError: (e) {
         if (_durum == Durum.dinliyor) _dinlemeBitti('');
+        if (_durum == Durum.bekliyor && _porcupine == null) {
+          _uyanikYenile(_dongu);
+        }
       },
-      onStatus: (_) {},
+      onStatus: (s) {
+        if ((s == 'done' || s == 'notListening') &&
+            _durum == Durum.bekliyor &&
+            _porcupine == null &&
+            !_islemde) {
+          _uyanikYenile(_dongu);
+        }
+      },
     );
     if (!_ayar.hazir) {
       if (mounted) setState(() {});
@@ -458,6 +470,14 @@ class _JarvisEkraniState extends State<JarvisEkrani>
   Future<void> _uyandirmaKur() async {
     await _porcupine?.delete();
     _porcupine = null;
+    if (_ayar.picovoiceAnahtar.isEmpty) {
+      // Anahtarsız mod: telefonun konuşma tanımasıyla "Jarvis"i yakala
+      await _bekle();
+      if (Platform.isAndroid && _ayar.arkaPlan) {
+        await _kanal.invokeMethod('baslat');
+      }
+      return;
+    }
     try {
       _porcupine = await PorcupineManager.fromBuiltInKeywords(
         _ayar.picovoiceAnahtar,
@@ -473,13 +493,19 @@ class _JarvisEkraniState extends State<JarvisEkrani>
       }
     } on PorcupineException catch (e) {
       _hataGoster(
-          'Picovoice anahtarı çalışmadı: ${e.message}. Ayarlardan kontrol edin.');
-      setState(() => _durum = Durum.kapali);
+          'Picovoice anahtarı çalışmadı (${e.message}). Anahtarsız modda devam ediliyor.');
+      _porcupine = null;
+      await _bekle();
     }
   }
 
   Future<void> _bekle() async {
     _canli = '';
+    if (_porcupine == null) {
+      if (mounted) setState(() => _durum = Durum.bekliyor);
+      _uyanikDinle();
+      return;
+    }
     try {
       await _porcupine?.start();
       if (mounted) setState(() => _durum = Durum.bekliyor);
@@ -487,6 +513,74 @@ class _JarvisEkraniState extends State<JarvisEkrani>
       _hataGoster('Mikrofon açılamadı: ${e.message}');
       if (mounted) setState(() => _durum = Durum.kapali);
     }
+  }
+
+  // ---- Anahtarsız uyandırma: sürekli dinle, "Jarvis" geçince uyan ----
+  int _dongu = 0;
+  static final RegExp _uyanmaKalibi = RegExp(
+      r'(jarvis|jarvıs|carvis|carvıs|cervis|çarvis|çervis|jarviz|carviz|jervis|jarbis|zarvis|şarvis)');
+
+  Future<void> _uyanikDinle() async {
+    if (_durum != Durum.bekliyor || _islemde || !_sttHazir) return;
+    final benim = ++_dongu;
+    if (_stt.isListening) await _stt.cancel();
+    if (benim != _dongu) return;
+    try {
+      await _stt.listen(
+        localeId: 'tr_TR',
+        listenFor: const Duration(seconds: 60),
+        pauseFor: const Duration(milliseconds: 1500),
+        listenOptions: SpeechListenOptions(
+          partialResults: true,
+          cancelOnError: true,
+          listenMode: ListenMode.dictation,
+        ),
+        onResult: (SpeechRecognitionResult r) {
+          if (benim != _dongu || _durum != Durum.bekliyor) return;
+          final kucuk = Eylemler.kucukHarf(r.recognizedWords);
+          final m = _uyanmaKalibi.firstMatch(kucuk);
+          if (m == null) {
+            if (r.finalResult) _uyanikYenile(benim);
+            return;
+          }
+          if (!r.finalResult) {
+            setState(() => _canli = r.recognizedWords);
+            return;
+          }
+          _dongu++;
+          final kalan = kucuk
+              .substring(m.end)
+              .replaceFirst(RegExp(r'^[\s,.!?]+'), '')
+              .trim();
+          _sesliUyandi(kalan);
+        },
+      );
+    } catch (_) {
+      _uyanikYenile(benim);
+    }
+  }
+
+  void _uyanikYenile(int benim) {
+    if (benim != _dongu) return;
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (benim == _dongu &&
+          _durum == Durum.bekliyor &&
+          _porcupine == null &&
+          !_islemde) {
+        _uyanikDinle();
+      }
+    });
+  }
+
+  Future<void> _sesliUyandi(String kalan) async {
+    HapticFeedback.mediumImpact();
+    if (kalan.split(' ').where((k) => k.isNotEmpty).length >= 2) {
+      // "Jarvis, hava nasıl" gibi tek seferde söylendiyse direkt yap
+      await _isle(kalan);
+      return;
+    }
+    await _konus('Efendim?');
+    await _dinle();
   }
 
   void _hataGoster(String m) {
@@ -513,6 +607,8 @@ class _JarvisEkraniState extends State<JarvisEkrani>
       return;
     }
     await _porcupine?.stop();
+    _dongu++;
+    if (_stt.isListening) await _stt.cancel();
     setState(() {
       _durum = Durum.dinliyor;
       _canli = '';
@@ -554,6 +650,8 @@ class _JarvisEkraniState extends State<JarvisEkrani>
   Future<void> _isle(String metin) async {
     if (_islemde) return;
     _islemde = true;
+    _dongu++;
+    if (_stt.isListening) await _stt.cancel();
     await _porcupine?.stop();
     setState(() {
       _durum = Durum.dusunuyor;
@@ -608,6 +706,8 @@ class _JarvisEkraniState extends State<JarvisEkrani>
   }
 
   Future<void> _kapat() async {
+    _dongu++;
+    if (mounted) setState(() => _durum = Durum.kapali);
     await _porcupine?.stop();
     await _stt.cancel();
     await _tts.stop();
@@ -972,10 +1072,10 @@ class _AyarlarEkraniState extends State<AyarlarEkrani> {
           _alan('Claude API anahtarı', _claude,
               gizli: true,
               ipucu: 'console.anthropic.com → API Keys (sk-ant-... ile başlar)'),
-          _alan('Picovoice AccessKey', _pico,
+          _alan('Picovoice AccessKey (isteğe bağlı)', _pico,
               gizli: true,
               ipucu:
-                  'console.picovoice.ai adresinden ücretsiz alınır. "Jarvis" uyandırma kelimesi için gerekli.'),
+                  'İsteğe bağlı. Boş bırakırsan Jarvis telefonun kendi konuşma tanımasıyla uyanır. Varsa daha hızlı ve pil dostu çalışır.'),
           _alan('Adın (isteğe bağlı)', _isim,
               ipucu: 'Jarvis sana adınla hitap edebilsin'),
           _alan('Model', _model, ipucu: 'Varsayılan: claude-sonnet-5-5'),
